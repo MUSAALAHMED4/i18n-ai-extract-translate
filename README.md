@@ -247,7 +247,7 @@ file (value = key) and to each language listed in `backend.mergeTargetLangs`
 
 ## Author
 
-MUSAALAHMED4 — [LinkedIn](https://www.linkedin.com/in/musa-al-ahmed-b187292a1)
+MUSAALAHMED — [LinkedIn](https://www.linkedin.com/in/musa-al-ahmed-b187292a1)
 
 ## License
 
