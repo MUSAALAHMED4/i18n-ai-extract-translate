@@ -400,11 +400,21 @@ async function withRetry(fn, { maxAttempts = 5 } = {}) {
   throw lastErr;
 }
 
+function sortKeysDeep(value) {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value == null || typeof value !== "object") return value;
+  const sorted = {};
+  for (const key of Object.keys(value).sort((a, b) => a.localeCompare(b))) {
+    sorted[key] = sortKeysDeep(value[key]);
+  }
+  return sorted;
+}
+
 async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
 async function writeJson(filePath, data) {
-  await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  await writeFile(filePath, `${JSON.stringify(sortKeysDeep(data), null, 2)}\n`, "utf8");
 }
 
 export async function runTranslate(config, cliOverrides = {}) {
@@ -472,6 +482,9 @@ export async function runTranslate(config, cliOverrides = {}) {
     }
   }
 
+  let totalAdded = 0;
+  let totalTranslated = 0;
+
   for (const lang of langs) {
     if (lang === sourceLang) continue;
 
@@ -538,9 +551,6 @@ export async function runTranslate(config, cliOverrides = {}) {
       }
 
       if (!dryRun && (autoCopiedCountForFile > 0 || placeholderEmptyCountForFile > 0)) {
-        process.stdout.write(
-          `[${lang}] ${fileName}: auto-copied ${autoCopiedCountForFile} non-translatable values, set ${placeholderEmptyCountForFile} missing placeholders\n`,
-        );
         await writeJson(targetPath, targetJson);
       }
 
@@ -561,6 +571,9 @@ export async function runTranslate(config, cliOverrides = {}) {
         continue;
       }
 
+      process.stdout.write(`Working on ${lang}/${fileName} (${limitedPending.length} strings to translate)...\n`);
+      totalAdded += limitedPending.length;
+
       const targetLanguage = languageDisplayName(lang);
       const chunks = chunkArray(limitedPending, chunkSize);
 
@@ -568,14 +581,6 @@ export async function runTranslate(config, cliOverrides = {}) {
       let receivedCountForFile = 0;
 
       for (const [chunkIndex, chunk] of chunks.entries()) {
-        process.stdout.write(
-          `[${lang}] ${fileName}: translating chunk ${chunkIndex + 1}/${chunks.length} (${chunk.length} items)\n`,
-        );
-
-        for (const item of chunk.slice(0, Math.min(5, chunk.length))) {
-          process.stdout.write(`  - ${pointerToKey(item.pointer)} => ${previewText(item.value)}\n`);
-        }
-
         const pointerToEnglish = Object.fromEntries(chunk.map((x) => [x.pointer, x.value]));
 
         let translated = {};
@@ -596,7 +601,7 @@ export async function runTranslate(config, cliOverrides = {}) {
           const message = err instanceof Error ? err.message : String(err);
           if (/UNTRANSLATED/i.test(message)) {
             process.stdout.write(
-              `[${lang}] ${fileName}: WARNING: could not translate this chunk after retries; skipping\n`,
+              `  ${lang}/${fileName}: could not translate one batch after retries, skipping it\n`,
             );
             await writeJson(targetPath, targetJson);
             continue;
@@ -636,24 +641,24 @@ export async function runTranslate(config, cliOverrides = {}) {
 
         if (skippedUntranslated > 0) {
           process.stdout.write(
-            `[${lang}] ${fileName}: skipped ${skippedUntranslated} untranslated values (model returned English)\n`,
+            `  ${lang}/${fileName}: ${skippedUntranslated} value(s) still look untranslated, left as-is\n`,
           );
         }
 
-        process.stdout.write(`[${lang}] ${fileName}: chunk ${chunkIndex + 1}/${chunks.length} done\n`);
-
         await writeJson(targetPath, targetJson);
-        process.stdout.write(`[${lang}] ${fileName}: saved progress (${updatedCountForFile} updated so far)\n`);
       }
 
-      if (updatedCountForFile === 0) {
-        process.stdout.write(
-          `[${lang}] ${fileName}: no keys updated (received ${receivedCountForFile} results). Use --force to overwrite existing values.\n`,
-        );
-      }
-
-      process.stdout.write(`[${lang}] ${fileName}: written ${targetPath} (${updatedCountForFile} updated)\n`);
+      totalTranslated += updatedCountForFile;
+      process.stdout.write(
+        `  ${lang}/${fileName}: done — ${updatedCountForFile}/${limitedPending.length} translated\n`,
+      );
     }
+  }
+
+  if (!dryRun) {
+    console.log(
+      `\nDone. ${totalAdded} string(s) needed translation, ${totalTranslated} were translated.`,
+    );
   }
 
   if (dryRun) {

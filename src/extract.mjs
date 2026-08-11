@@ -72,6 +72,16 @@ function createStdoutFilter(writeLine) {
   return { flush, end };
 }
 
+function sortKeysDeep(value) {
+  if (Array.isArray(value)) return value.map(sortKeysDeep);
+  if (value == null || typeof value !== "object") return value;
+  const sorted = {};
+  for (const key of Object.keys(value).sort((a, b) => a.localeCompare(b))) {
+    sorted[key] = sortKeysDeep(value[key]);
+  }
+  return sorted;
+}
+
 async function readJson(filePath) {
   try {
     return JSON.parse(await readFile(filePath, "utf8"));
@@ -81,7 +91,7 @@ async function readJson(filePath) {
 }
 
 async function writeJson(filePath, data) {
-  await writeFile(filePath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  await writeFile(filePath, `${JSON.stringify(sortKeysDeep(data), null, 2)}\n`, "utf8");
 }
 
 function run(command, args, { cwd } = {}) {
@@ -379,6 +389,9 @@ async function writeScannerConfig(config, tmpDir) {
       defaultNs,
       keySeparator: false,
       nsSeparator: false,
+      // Keep locale files in a stable, alphabetical order instead of
+      // whatever order the scanner happens to encounter strings in.
+      sort: true,
       defaultValue: `__DEFAULT_VALUE_PLACEHOLDER__`,
       resource: {
         loadPath: `${localesDir}/{{lng}}/{{ns}}.json`,

@@ -333,6 +333,9 @@ if your backend raises other user-facing errors.
   run doesn't lose completed work.
 - Values that already look non-English are left alone unless `--force` is
   passed.
+- Locale JSON files are always written with keys sorted alphabetically, so
+  they build up in a stable, predictable order instead of whatever order
+  strings happened to be discovered in.
 
 ## Author
 
