@@ -115,17 +115,59 @@ const PYTHON_AST_SCRIPT = String.raw`
 import ast, json, sys
 from pathlib import Path
 
-DICT_KEY = sys.argv[2] if len(sys.argv) > 2 else "error"
-EXCLUDED_DIR_NAMES = set(json.loads(sys.argv[3])) if len(sys.argv) > 3 else set()
+DICT_KEYS = set(json.loads(sys.argv[2])) if len(sys.argv) > 2 else {"error"}
+ERROR_CALL_NAMES = set(json.loads(sys.argv[3])) if len(sys.argv) > 3 else {"ValidationError"}
+EXCLUDED_DIR_NAMES = set(json.loads(sys.argv[4])) if len(sys.argv) > 4 else set()
+
+def call_name(node):
+  func = node.func
+  if isinstance(func, ast.Attribute):
+    return func.attr
+  if isinstance(func, ast.Name):
+    return func.id
+  return None
 
 class Collector(ast.NodeVisitor):
   def __init__(self):
     self.items = []
+
+  def collect_strings(self, node):
+    # Walks dicts/lists/tuples/sets of string literals, e.g. the argument of
+    # raise serializers.ValidationError({'field': 'message'}) or
+    # raise serializers.ValidationError(['message one', 'message two']).
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+      if node.value.strip():
+        self.items.append(node.value)
+    elif isinstance(node, ast.Dict):
+      for v in node.values:
+        self.collect_strings(v)
+    elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+      for el in node.elts:
+        self.collect_strings(el)
+
   def visit_Dict(self, node):
+    # Matches dicts keyed by a known error key, e.g. {"error": "..."},
+    # anywhere in the code (not just inside a matched call).
     for k, v in zip(node.keys, node.values):
-      if isinstance(k, ast.Constant) and k.value == DICT_KEY:
+      if isinstance(k, ast.Constant) and k.value in DICT_KEYS:
         if isinstance(v, ast.Constant) and isinstance(v.value, str):
           self.items.append(v.value)
+        elif isinstance(v, (ast.List, ast.Tuple)):
+          for el in v.elts:
+            if isinstance(el, ast.Constant) and isinstance(el.value, str):
+              self.items.append(el.value)
+    self.generic_visit(node)
+
+  def visit_Call(self, node):
+    # Matches calls like serializers.ValidationError(...) or
+    # ValidationError(...) and collects every string literal in their
+    # arguments, regardless of dict key names.
+    if call_name(node) in ERROR_CALL_NAMES:
+      for arg in node.args:
+        self.collect_strings(arg)
+      for kw in node.keywords:
+        if kw.value is not None:
+          self.collect_strings(kw.value)
     self.generic_visit(node)
 
 def should_skip(path: Path) -> bool:
@@ -159,7 +201,12 @@ for py_file in root.rglob("*.py"):
 sys.stdout.write(json.dumps({"filesScanned": files_scanned, "errorStrings": out}, ensure_ascii=False))
 `;
 
-async function extractPythonErrorStrings({ rootDir, dictKey, excludedDirs }) {
+async function extractPythonErrorStrings({
+  rootDir,
+  dictKeys,
+  errorCallNames,
+  excludedDirs,
+}) {
   const candidates = ["python3", "python"];
   let lastErr;
   for (const cmd of candidates) {
@@ -168,7 +215,8 @@ async function extractPythonErrorStrings({ rootDir, dictKey, excludedDirs }) {
         "-c",
         PYTHON_AST_SCRIPT,
         rootDir,
-        dictKey,
+        JSON.stringify(dictKeys),
+        JSON.stringify(errorCallNames),
         JSON.stringify(excludedDirs),
       ]);
       const parsed = JSON.parse(stdout || "{}");
@@ -193,9 +241,19 @@ export async function mergeBackendErrorsIntoLocales(config) {
   if (!backend?.enabled) return;
 
   const rootDir = path.resolve(projectRoot, backend.rootDir ?? "..");
+  const dictKeys =
+    backend.dictKeys && backend.dictKeys.length > 0
+      ? backend.dictKeys
+      : [backend.dictKey ?? "error"];
+  const errorCallNames =
+    backend.errorCallNames && backend.errorCallNames.length > 0
+      ? backend.errorCallNames
+      : ["ValidationError"];
+
   const { filesScanned, errorStrings } = await extractPythonErrorStrings({
     rootDir,
-    dictKey: backend.dictKey ?? "error",
+    dictKeys,
+    errorCallNames,
     excludedDirs: backend.excludedDirs ?? [],
   });
 

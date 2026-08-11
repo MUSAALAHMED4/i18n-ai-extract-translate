@@ -165,8 +165,9 @@ module.exports = {
   localesDir: "src/i18n/locales",
   backend: {
     enabled: true,
-    rootDir: "..",           // where your Python backend lives, relative to cwd
-    dictKey: "error",         // collects { "error": "..." } dict literals via AST
+    rootDir: "..",                    // where your Python backend lives, relative to cwd
+    dictKeys: ["error"],              // collects { "error": "..." } dict literals via AST
+    errorCallNames: ["ValidationError"], // also collects every string in ValidationError(...) calls
     mergeTargetLangs: ["ar", "ch"],
   },
   translate: {
@@ -224,17 +225,33 @@ AI_KEY=... npm run i18n:all
 ## Backend (Python) extraction
 
 When `backend.enabled` is `true`, `extract` also walks `backend.rootDir` for
-`*.py` files (skipping `backend.excludedDirs`) and collects string values
-from dict literals whose key matches `backend.dictKey` (default: `"error"`),
-e.g.:
+`*.py` files (skipping `backend.excludedDirs`) and collects strings from two
+patterns:
 
-```python
-return Response({"error": "This field is required."}, status=400)
-```
+1. **Dict literals** whose key matches one of `backend.dictKeys` (default:
+   `["error"]`), anywhere in the code:
+
+   ```python
+   return Response({"error": "This field is required."}, status=400)
+   ```
+
+2. **Calls to any of `backend.errorCallNames`** (default: `["ValidationError"]`,
+   matched by the last attribute segment, so it also matches
+   `serializers.ValidationError(...)`) — every string literal in the call's
+   arguments is collected, regardless of dict key names. This catches the
+   common DRF pattern where the dict key is a field name, not `"error"`:
+
+   ```python
+   raise serializers.ValidationError({"support_details": "Expected a list of support detail objects."})
+   raise serializers.ValidationError("Plain message error.")
+   raise serializers.ValidationError(["First error.", "Second error."])
+   ```
 
 Each unique string found this way is added to the default-language locale
 file (value = key) and to each language listed in `backend.mergeTargetLangs`
-(as an empty string, ready for `translate` to fill in).
+(as an empty string, ready for `translate` to fill in). Add more exception
+names to `backend.errorCallNames` (e.g. `"NotFound"`, `"PermissionDenied"`)
+if your backend raises other user-facing errors.
 
 ## Notes
 

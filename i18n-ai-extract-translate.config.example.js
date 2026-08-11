@@ -12,7 +12,13 @@ module.exports = {
   backend: {
     enabled: true,
     rootDir: "..", // project root that contains the Python backend, relative to this config's cwd
-    dictKey: "error",
+    // Dict literals { "<key>": "..." } are collected when the key is one of these.
+    dictKeys: ["error"],
+    // Calls to any of these (matched by their last attribute segment, so
+    // "ValidationError" also matches serializers.ValidationError(...)) have
+    // ALL string literals in their arguments collected, regardless of dict
+    // key — this catches DRF-style raise serializers.ValidationError({"field": "..."}).
+    errorCallNames: ["ValidationError"],
     excludedDirs: [
       "__pycache__",
       "migrations",

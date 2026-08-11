@@ -27,8 +27,17 @@ const DEFAULT_CONFIG = {
     enabled: false,
     // Root directory to scan for *.py files, relative to the project root.
     rootDir: "..",
-    // Only dict literals of the form { "<dictKey>": "..." } are collected.
+    // Dict literals of the form { "<key>": "..." } are collected when the
+    // key matches one of dictKeys (kept for backward compat: dictKey is
+    // used as a fallback if dictKeys is empty).
     dictKey: "error",
+    dictKeys: ["error"],
+    // Calls to any of these functions/exceptions (matched by their last
+    // attribute segment, e.g. "ValidationError" also matches
+    // `serializers.ValidationError(...)`) have ALL string literals in their
+    // arguments collected, regardless of dict key names — this catches
+    // patterns like `raise serializers.ValidationError({"field": "..."})`.
+    errorCallNames: ["ValidationError"],
     excludedDirs: [
       "__pycache__",
       "migrations",
