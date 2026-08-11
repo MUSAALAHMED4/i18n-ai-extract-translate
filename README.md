@@ -2,7 +2,8 @@
 
 Scans a JS/TS/React codebase for `t("...")` / `<Trans>` usages, writes the
 strings into i18next-style locale JSON files, and can optionally translate
-missing entries automatically with Gemini. It can also mine a Python backend
+missing entries automatically with Gemini (Gemini Developer API or Vertex AI).
+It can also mine a Python backend
 for hard-coded error strings and merge them into the same locale files.
 
 ## Install
@@ -25,7 +26,7 @@ If you're developing this package locally and want to test changes in another pr
 
 - **Node.js 18+** (the code relies on built-in `fetch` and ESM modules).
 - **Python 3** available on `PATH` (`python3` or `python`) — **only** if you'll use the backend error-extraction feature (`backend.enabled: true`). Skip this if your project has no Python backend.
-- A **Gemini API key** (env var `AI_KEY`) — only needed for AI auto-translation via the `translate` command. `extract` never needs it.
+- **AI credentials** — only needed for auto-translation via the `translate` command (`extract` never needs it): a **Gemini API key** (env var `AI_KEY`) by default, or Google Cloud credentials if you use the Vertex AI provider instead. See "AI providers" below.
 
 ### Method 1 — local path dependency (for local development, before publishing a new version)
 
@@ -172,6 +173,7 @@ module.exports = {
     mergeTargetLangs: ["ar", "ch"],
   },
   translate: {
+    provider: "gemini",              // or "vertex" — see "AI providers" below
     sourceLang: "eng",
     targetLangs: ["ar", "ch"],
   },
@@ -214,14 +216,63 @@ AI_KEY=... npm run i18n:all
 
 ### `translate` flags
 
+- `--provider gemini|vertex` — override `translate.provider`.
 - `--langs ar,ch` — override `translate.targetLangs`.
 - `--source eng` — override `translate.sourceLang`.
-- `--model auto|<gemini-model>` — defaults to auto-selecting a supported model.
-- `--chunk 40` — batch size per Gemini request.
+- `--model auto|<model-name>` — defaults to auto-selecting a supported model (Gemini only; Vertex needs an explicit model).
+- `--chunk 40` — batch size per request.
 - `--max N` — cap how many strings get translated in this run.
 - `--preview N` — how many example keys to print per language in `--dry-run`.
 - `--dry-run` — report missing/likely-untranslated strings without calling the API.
 - `--force` — re-translate everything, even existing values.
+- `--project <gcp-project>` / `--location us-central1` — Vertex AI only, override `translate.vertex.project` / `translate.vertex.location`.
+
+## AI providers
+
+`translate` supports two backends, chosen via `translate.provider` (or `--provider`):
+
+### `gemini` (default) — Gemini Developer API / AI Studio
+
+Simplest option: one static API key.
+
+```bash
+AI_KEY=your_gemini_api_key npm run i18n:translate
+```
+
+### `vertex` — Vertex AI on Google Cloud
+
+Use this if your team already authenticates to Google Cloud (a GCP project,
+IAM, service accounts) instead of a standalone Gemini API key.
+
+```js
+translate: {
+  provider: "vertex",
+  vertex: {
+    project: "your-gcp-project-id",
+    location: "us-central1",          // default
+    model: "gemini-2.0-flash-001",    // default
+  },
+  targetLangs: ["ar", "ch"],
+},
+```
+
+Vertex needs a Google Cloud OAuth2 access token, resolved in this order:
+
+1. `VERTEX_ACCESS_TOKEN` env var — a token you already minted yourself.
+2. `GOOGLE_APPLICATION_CREDENTIALS` env var — path to a service account key
+   JSON file (the library signs its own JWT and exchanges it for a token,
+   no extra dependencies needed).
+3. `gcloud auth application-default login` — used as a fallback via
+   `gcloud auth application-default print-access-token` (handy for local dev
+   if you have the `gcloud` CLI installed).
+
+```bash
+# option 2: service account key file
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json npm run i18n:translate -- --provider vertex
+
+# option 3: gcloud CLI (after `gcloud auth application-default login` once)
+npm run i18n:translate -- --provider vertex
+```
 
 ## Backend (Python) extraction
 
@@ -276,8 +327,8 @@ if your backend raises other user-facing errors.
 
 ## Notes
 
-- `translate` requires `AI_KEY` (a Google AI Studio / Gemini API key) in the
-  environment, unless you pass `--dry-run`.
+- `translate` requires AI credentials (see "AI providers" above) unless you
+  pass `--dry-run`.
 - Progress is saved to disk after every translation batch, so an interrupted
   run doesn't lose completed work.
 - Values that already look non-English are left alone unless `--force` is

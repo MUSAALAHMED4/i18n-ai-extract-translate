@@ -58,12 +58,21 @@ const DEFAULT_CONFIG = {
     // Which locales (besides defaultLng) get an empty placeholder for new backend strings.
     mergeTargetLangs: [],
   },
-  // AI translation (Gemini).
+  // AI translation.
   translate: {
+    // "gemini" = Gemini Developer API (AI Studio), needs AI_KEY.
+    // "vertex" = Vertex AI on Google Cloud, needs translate.vertex.project
+    // and Google Cloud credentials (see vertex.* below and the README).
+    provider: "gemini",
     sourceLang: "eng",
     targetLangs: [],
     model: "auto",
     chunkSize: 40,
+    vertex: {
+      project: "",
+      location: "us-central1",
+      model: "gemini-2.0-flash-001",
+    },
   },
 };
 

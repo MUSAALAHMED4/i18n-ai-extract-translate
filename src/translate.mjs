@@ -1,5 +1,6 @@
 import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { resolveVertexAccessToken } from "./vertexAuth.mjs";
 
 const GEMINI_API_VERSIONS = ["v1", "v1beta"];
 
@@ -252,18 +253,8 @@ async function resolveSupportedModel({ apiKey, requestedModel }) {
   return supported[0];
 }
 
-async function translatePointersWithGemini({
-  apiKey,
-  model,
-  targetLang,
-  targetLanguage,
-  pointerToEnglish,
-  attempt = 1,
-}) {
-  const normalizedModel = normalizeModelName(model);
-  const strictMode = attempt >= 2;
-
-  const instructions = [
+function buildTranslationInstructions(targetLanguage, strictMode) {
+  return [
     "You are a professional UI translator.",
     `Translate the JSON values from English to ${targetLanguage}.`,
     "Return ONLY a valid JSON object.",
@@ -276,8 +267,10 @@ async function translatePointersWithGemini({
       ? `IMPORTANT: Output MUST be in ${targetLanguage}. Do NOT copy the English input verbatim.`
       : "",
   ].join("\n");
+}
 
-  const payload = {
+function buildTranslationPayload(instructions, pointerToEnglish) {
+  return {
     contents: [
       {
         role: "user",
@@ -286,8 +279,11 @@ async function translatePointersWithGemini({
     ],
     generationConfig: { temperature: 0.2, responseMimeType: "application/json" },
   };
+}
 
-  let lastError;
+async function callGeminiDeveloperAPI({ apiKey, model, payload }) {
+  const normalizedModel = normalizeModelName(model);
+  let lastResult;
   for (const version of GEMINI_API_VERSIONS) {
     const result = await geminiFetch({
       apiKey,
@@ -295,52 +291,94 @@ async function translatePointersWithGemini({
       path: `models/${encodeURIComponent(normalizedModel)}:generateContent`,
       body: payload,
     });
+    if (result.ok) return result;
+    lastResult = result;
+  }
+  return lastResult;
+}
 
-    if (result.ok) {
-      const data = safeJsonParse(result.rawText);
-      const combinedText =
-        data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
-      if (!combinedText) {
-        throw new Error(`Gemini returned no text. Raw response: ${result.rawText.slice(0, 500)}`);
-      }
+async function callVertexAI({ accessToken, project, location, model, payload }) {
+  if (!globalThis.fetch) throw new Error("Global fetch is not available. Use Node 18+.");
+  const normalizedModel = normalizeModelName(model);
+  const url =
+    `https://${location}-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(project)}` +
+    `/locations/${encodeURIComponent(location)}/publishers/google/models/` +
+    `${encodeURIComponent(normalizedModel)}:generateContent`;
 
-      const translated = safeJsonParse(combinedText);
-      if (translated == null || typeof translated !== "object" || Array.isArray(translated)) {
-        throw new Error("Gemini output is not a JSON object");
-      }
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const rawText = await res.text();
+  return { ok: res.ok, status: res.status, rawText };
+}
 
-      const expectedPointers = Object.keys(pointerToEnglish);
-      let missingCount = 0;
-      for (const pointer of expectedPointers) {
-        if (!(pointer in translated)) missingCount += 1;
-      }
-      if (missingCount > 0) {
-        throw new Error(`UNTRANSLATED: model response is missing ${missingCount}/${expectedPointers.length} keys`);
-      }
+async function translatePointersWithProvider({
+  provider,
+  auth,
+  targetLang,
+  targetLanguage,
+  pointerToEnglish,
+  attempt = 1,
+}) {
+  const strictMode = attempt >= 2;
+  const instructions = buildTranslationInstructions(targetLanguage, strictMode);
+  const payload = buildTranslationPayload(instructions, pointerToEnglish);
+  const providerLabel = provider === "vertex" ? "Vertex AI" : "Gemini";
 
-      let unchangedCount = 0;
-      for (const pointer of expectedPointers) {
-        const src = pointerToEnglish[pointer];
-        const out = translated[pointer];
-        if (
-          typeof out !== "string" ||
-          looksUntranslated({ sourceEnglish: src, translatedValue: out, targetLang })
-        ) {
-          unchangedCount += 1;
-        }
-      }
+  const result =
+    provider === "vertex"
+      ? await callVertexAI({ ...auth, payload })
+      : await callGeminiDeveloperAPI({ ...auth, payload });
 
-      if (unchangedCount === expectedPointers.length) {
-        throw new Error(`UNTRANSLATED: ${unchangedCount}/${expectedPointers.length} values look unchanged`);
-      }
-
-      return translated;
-    }
-
-    lastError = new Error(`Gemini API error (${result.status}): ${result.rawText.slice(0, 500)}`);
+  if (!result || !result.ok) {
+    throw new Error(
+      `${providerLabel} API error (${result?.status ?? "?"}): ${(result?.rawText ?? "").slice(0, 500)}`,
+    );
   }
 
-  throw lastError ?? new Error("Gemini API request failed");
+  const data = safeJsonParse(result.rawText);
+  const combinedText =
+    data?.candidates?.[0]?.content?.parts?.map((p) => p.text).join("") ?? "";
+  if (!combinedText) {
+    throw new Error(`${providerLabel} returned no text. Raw response: ${result.rawText.slice(0, 500)}`);
+  }
+
+  const translated = safeJsonParse(combinedText);
+  if (translated == null || typeof translated !== "object" || Array.isArray(translated)) {
+    throw new Error(`${providerLabel} output is not a JSON object`);
+  }
+
+  const expectedPointers = Object.keys(pointerToEnglish);
+  let missingCount = 0;
+  for (const pointer of expectedPointers) {
+    if (!(pointer in translated)) missingCount += 1;
+  }
+  if (missingCount > 0) {
+    throw new Error(`UNTRANSLATED: model response is missing ${missingCount}/${expectedPointers.length} keys`);
+  }
+
+  let unchangedCount = 0;
+  for (const pointer of expectedPointers) {
+    const src = pointerToEnglish[pointer];
+    const out = translated[pointer];
+    if (
+      typeof out !== "string" ||
+      looksUntranslated({ sourceEnglish: src, translatedValue: out, targetLang })
+    ) {
+      unchangedCount += 1;
+    }
+  }
+
+  if (unchangedCount === expectedPointers.length) {
+    throw new Error(`UNTRANSLATED: ${unchangedCount}/${expectedPointers.length} values look unchanged`);
+  }
+
+  return translated;
 }
 
 async function withRetry(fn, { maxAttempts = 5 } = {}) {
@@ -372,9 +410,10 @@ async function writeJson(filePath, data) {
 export async function runTranslate(config, cliOverrides = {}) {
   const { projectRoot, localesDir, defaultNs, translate } = config;
 
+  const provider = cliOverrides.provider ?? translate.provider ?? "gemini";
   const sourceLang = cliOverrides.sourceLang ?? translate.sourceLang;
   const langs = cliOverrides.langs ?? translate.targetLangs;
-  const model = cliOverrides.model ?? translate.model;
+  const model = cliOverrides.model ?? (provider === "vertex" ? translate.vertex?.model : translate.model);
   const chunkSize = cliOverrides.chunkSize ?? translate.chunkSize;
   const preview = cliOverrides.preview ?? 10;
   const dryRun = Boolean(cliOverrides.dryRun);
@@ -387,6 +426,10 @@ export async function runTranslate(config, cliOverrides = {}) {
     );
   }
 
+  if (provider !== "gemini" && provider !== "vertex") {
+    throw new Error(`Unknown translate provider "${provider}". Use "gemini" or "vertex".`);
+  }
+
   const localesRoot = path.join(projectRoot, localesDir);
   const sourceDir = path.join(localesRoot, sourceLang);
   const sourceFiles = (await readdir(sourceDir)).filter((f) => f.endsWith(".json"));
@@ -397,17 +440,36 @@ export async function runTranslate(config, cliOverrides = {}) {
   const missingByLang = new Map();
   const missingExamples = new Map();
 
-  const apiKey = dryRun ? "" : process.env.AI_KEY;
-  if (!dryRun && !apiKey) {
-    throw new Error("AI_KEY is not set. Example: AI_KEY=... i18n-ai-extract-translate translate");
-  }
+  let auth = {};
+  let resolvedModel = "";
 
-  const resolvedModel = dryRun ? "" : await resolveSupportedModel({ apiKey, requestedModel: model });
-  if (!dryRun && !resolvedModel) {
-    throw new Error("Could not resolve a supported Gemini model. Try passing --model <modelName>.");
-  }
-  if (!dryRun && model === "auto") {
-    process.stdout.write(`[gemini] auto-selected model: ${resolvedModel}\n`);
+  if (!dryRun) {
+    if (provider === "vertex") {
+      const project = cliOverrides.project ?? translate.vertex?.project;
+      const location = cliOverrides.location ?? translate.vertex?.location ?? "us-central1";
+      if (!project) {
+        throw new Error(
+          "translate.vertex.project is not set. Add it to your config, or pass --project <gcp-project-id>.",
+        );
+      }
+      const accessToken = await resolveVertexAccessToken();
+      resolvedModel = normalizeModelName(model) || "gemini-2.0-flash-001";
+      auth = { accessToken, project, location, model: resolvedModel };
+      process.stdout.write(`[vertex] project=${project} location=${location} model=${resolvedModel}\n`);
+    } else {
+      const apiKey = process.env.AI_KEY;
+      if (!apiKey) {
+        throw new Error("AI_KEY is not set. Example: AI_KEY=... i18n-ai-extract-translate translate");
+      }
+      resolvedModel = await resolveSupportedModel({ apiKey, requestedModel: model });
+      if (!resolvedModel) {
+        throw new Error("Could not resolve a supported Gemini model. Try passing --model <modelName>.");
+      }
+      if (model === "auto") {
+        process.stdout.write(`[gemini] auto-selected model: ${resolvedModel}\n`);
+      }
+      auth = { apiKey, model: resolvedModel };
+    }
   }
 
   for (const lang of langs) {
@@ -520,9 +582,9 @@ export async function runTranslate(config, cliOverrides = {}) {
         try {
           translated = await withRetry(
             async (attempt) =>
-              translatePointersWithGemini({
-                apiKey,
-                model: resolvedModel,
+              translatePointersWithProvider({
+                provider,
+                auth,
                 targetLang: lang,
                 targetLanguage,
                 pointerToEnglish,

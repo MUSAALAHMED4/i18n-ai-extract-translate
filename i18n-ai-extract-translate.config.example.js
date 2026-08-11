@@ -39,9 +39,20 @@ module.exports = {
     mergeTargetLangs: ["ar", "ch"],
   },
   translate: {
+    // "gemini" (default): Gemini Developer API / AI Studio, needs AI_KEY.
+    // "vertex": Vertex AI on Google Cloud, needs vertex.project below plus
+    // Google Cloud credentials (VERTEX_ACCESS_TOKEN env var, or
+    // GOOGLE_APPLICATION_CREDENTIALS pointing to a service account key file,
+    // or `gcloud auth application-default login`).
+    provider: "gemini",
     sourceLang: "eng",
     targetLangs: ["ar", "ch"],
     model: "auto",
     chunkSize: 40,
+    vertex: {
+      project: "your-gcp-project-id",
+      location: "us-central1",
+      model: "gemini-2.0-flash-001",
+    },
   },
 };

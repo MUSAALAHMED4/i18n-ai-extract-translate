@@ -13,10 +13,16 @@ Commands:
       into the locale JSON files. With a backend.enabled config, also mines
       a Python backend for hard-coded error strings.
 
-  translate [--langs ar,ch] [--source eng] [--model auto] [--chunk 40]
-            [--max N] [--preview N] [--dry-run] [--force]
-      Fills in missing/empty locale entries using Gemini. Requires AI_KEY
-      in the environment (unless --dry-run).
+  translate [--provider gemini|vertex] [--langs ar,ch] [--source eng]
+            [--model auto] [--chunk 40] [--max N] [--preview N]
+            [--dry-run] [--force] [--project <gcp-project>] [--location us-central1]
+      Fills in missing/empty locale entries using AI.
+        --provider gemini (default): needs AI_KEY in the environment.
+        --provider vertex: needs translate.vertex.project (or --project) and
+          Google Cloud credentials (VERTEX_ACCESS_TOKEN, or
+          GOOGLE_APPLICATION_CREDENTIALS pointing to a service account key,
+          or gcloud auth application-default login).
+      Neither is required with --dry-run.
 
   all
       Runs extract, then translate (only if AI_KEY is set).
@@ -68,6 +74,7 @@ async function main() {
 
   if (command === "translate") {
     await runTranslate(config, {
+      provider: typeof flags.provider === "string" ? flags.provider : undefined,
       langs: typeof flags.langs === "string" ? flags.langs.split(",").map((s) => s.trim()) : undefined,
       sourceLang: typeof flags.source === "string" ? flags.source : undefined,
       model: typeof flags.model === "string" ? flags.model : undefined,
@@ -76,6 +83,8 @@ async function main() {
       preview: typeof flags.preview === "string" ? Number(flags.preview) : undefined,
       dryRun: Boolean(flags["dry-run"]),
       force: Boolean(flags.force),
+      project: typeof flags.project === "string" ? flags.project : undefined,
+      location: typeof flags.location === "string" ? flags.location : undefined,
     });
     return;
   }
