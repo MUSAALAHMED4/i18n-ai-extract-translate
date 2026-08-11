@@ -13,7 +13,13 @@ npm install --save-dev i18n-ai-extract-translate
 
 ## Installing and running this in another project (full detail)
 
-The package isn't published on the public npm registry yet, so there are four ways to install it into any other project on your machine. Pick whichever fits your situation:
+The package is published on the public npm registry, so in most cases you just need:
+
+```bash
+npm install --save-dev i18n-ai-extract-translate
+```
+
+If you're developing this package locally and want to test changes in another project before publishing a new version, use one of the alternative methods below instead.
 
 ### Prerequisites
 
@@ -21,7 +27,7 @@ The package isn't published on the public npm registry yet, so there are four wa
 - **Python 3** available on `PATH` (`python3` or `python`) — **only** if you'll use the backend error-extraction feature (`backend.enabled: true`). Skip this if your project has no Python backend.
 - A **Gemini API key** (env var `AI_KEY`) — only needed for AI auto-translation via the `translate` command. `extract` never needs it.
 
-### Method 1 — local path dependency (easiest during development, before publishing)
+### Method 1 — local path dependency (for local development, before publishing a new version)
 
 In the other project's `package.json`:
 
@@ -69,15 +75,13 @@ npm install --save-dev /path/to/i18n-ai-extract-translate/i18n-ai-extract-transl
 
 This mirrors exactly what a real npm install would get (only the files listed in `package.json`'s `files` field are packed), so it's a good way to sanity-check before publishing.
 
-### Method 4 — after publishing to the public npm registry
-
-Once you run `npm publish` from inside the package folder (requires `npm login` and an npm account — this is a step you need to run yourself):
+### Method 4 — the npm registry (recommended, see the top of this section)
 
 ```bash
 npm install --save-dev i18n-ai-extract-translate
 ```
 
-From then on it behaves like any regular npm package in any project, no local paths needed.
+Publishing a new version (for maintainers): bump the version in `package.json` (e.g. `npm version patch`), then `npm publish` from inside the package folder — requires `npm login` and publish access to this package.
 
 ### Post-install setup (applies to all methods above)
 
