@@ -336,6 +336,10 @@ if your backend raises other user-facing errors.
 - Locale JSON files are always written with keys sorted alphabetically, so
   they build up in a stable, predictable order instead of whatever order
   strings happened to be discovered in.
+- If one batch fails to translate (malformed model output, a transient API
+  error that outlives the retries, etc.), it's logged and skipped — the run
+  continues with the next batch/file/language instead of aborting the whole
+  job. Progress already written to disk is never lost.
 
 ## Author
 
