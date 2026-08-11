@@ -58,13 +58,13 @@ export async function runAll(config) {
     }
   }
 
-  const apiKey = process.env.AI_KEY;
-  if (!apiKey) {
+  const provider = config.translate?.provider ?? "gemini";
+  if (provider === "gemini" && !process.env.AI_KEY) {
     console.log("\nNo AI_KEY detected. Skipping AI translation.");
     return;
   }
 
-  console.log("\nAI key detected. Running AI translation...");
+  console.log(`\nRunning AI translation (provider: ${provider})...`);
   await runTranslate(config);
 
   console.log("\nThe texts were extracted and the translations were added.");

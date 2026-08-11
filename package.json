@@ -1,6 +1,6 @@
 {
   "name": "i18n-ai-extract-translate",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Extract translatable strings from a React/JS codebase (and optionally a Python backend) into i18next JSON locale files, then auto-translate the missing entries with Gemini.",
   "type": "module",
   "main": "src/index.mjs",
