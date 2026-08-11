@@ -19,6 +19,11 @@ module.exports = {
     // ALL string literals in their arguments collected, regardless of dict
     // key — this catches DRF-style raise serializers.ValidationError({"field": "..."}).
     errorCallNames: ["ValidationError"],
+    // Assignments to any of these variable names have their value fully
+    // collected: a plain string (title = "..."), an f-string (message =
+    // f"... {var} ..." — interpolations become {{var}} placeholders), or a
+    // dict/list of strings (status_translations = {"requested": "Requested", ...}).
+    variableNames: ["title", "message", "status_translations"],
     excludedDirs: [
       "__pycache__",
       "migrations",

@@ -168,6 +168,7 @@ module.exports = {
     rootDir: "..",                    // where your Python backend lives, relative to cwd
     dictKeys: ["error"],              // collects { "error": "..." } dict literals via AST
     errorCallNames: ["ValidationError"], // also collects every string in ValidationError(...) calls
+    variableNames: ["title", "message", "status_translations"], // also collects assignments to these names
     mergeTargetLangs: ["ar", "ch"],
   },
   translate: {
@@ -225,8 +226,8 @@ AI_KEY=... npm run i18n:all
 ## Backend (Python) extraction
 
 When `backend.enabled` is `true`, `extract` also walks `backend.rootDir` for
-`*.py` files (skipping `backend.excludedDirs`) and collects strings from two
-patterns:
+`*.py` files (skipping `backend.excludedDirs`) and collects strings from
+three patterns:
 
 1. **Dict literals** whose key matches one of `backend.dictKeys` (default:
    `["error"]`), anywhere in the code:
@@ -246,6 +247,26 @@ patterns:
    raise serializers.ValidationError("Plain message error.")
    raise serializers.ValidationError(["First error.", "Second error."])
    ```
+
+3. **Assignments to any of `backend.variableNames`** (default: `[]`, opt-in) —
+   the assigned value is collected, whatever shape it is: a plain string, an
+   f-string (interpolated expressions become `{{expr}}` i18next-style
+   placeholders instead of their runtime value), or a dict/list of strings
+   (only the values are collected, not dict keys — handy for status/code →
+   label maps):
+
+   ```python
+   status_translations = {
+       "requested": "Requested",
+       "accepted": "Accepted",
+   }
+   title = "Visit Status Change"
+   message = f"Visit status changed from '{old_status_ar}' to '{new_status_ar}'"
+   # → "Visit status changed from '{{old_status_ar}}' to '{{new_status_ar}}'"
+   ```
+
+   Set e.g. `variableNames: ["title", "message", "status_translations"]` to
+   pick these up.
 
 Each unique string found this way is added to the default-language locale
 file (value = key) and to each language listed in `backend.mergeTargetLangs`

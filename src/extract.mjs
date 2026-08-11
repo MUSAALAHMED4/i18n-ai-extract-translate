@@ -117,7 +117,8 @@ from pathlib import Path
 
 DICT_KEYS = set(json.loads(sys.argv[2])) if len(sys.argv) > 2 else {"error"}
 ERROR_CALL_NAMES = set(json.loads(sys.argv[3])) if len(sys.argv) > 3 else {"ValidationError"}
-EXCLUDED_DIR_NAMES = set(json.loads(sys.argv[4])) if len(sys.argv) > 4 else set()
+VARIABLE_NAMES = set(json.loads(sys.argv[4])) if len(sys.argv) > 4 else set()
+EXCLUDED_DIR_NAMES = set(json.loads(sys.argv[5])) if len(sys.argv) > 5 else set()
 
 def call_name(node):
   func = node.func
@@ -131,31 +132,46 @@ class Collector(ast.NodeVisitor):
   def __init__(self):
     self.items = []
 
-  def collect_strings(self, node):
-    # Walks dicts/lists/tuples/sets of string literals, e.g. the argument of
-    # raise serializers.ValidationError({'field': 'message'}) or
-    # raise serializers.ValidationError(['message one', 'message two']).
+  def render_fstring(self, node):
+    # Renders an f-string back to a translatable template, turning each
+    # interpolated expression into a {{expr}} placeholder (i18next style)
+    # instead of collecting the runtime value.
+    parts = []
+    for value in node.values:
+      if isinstance(value, ast.Constant):
+        parts.append(str(value.value))
+      elif isinstance(value, ast.FormattedValue):
+        try:
+          expr_src = ast.unparse(value.value)
+        except Exception:
+          expr_src = "value"
+        parts.append("{{" + expr_src + "}}")
+    return "".join(parts)
+
+  def collect_value(self, node):
+    # Walks a value node (string / f-string / dict / list / tuple / set) and
+    # collects every translatable string found inside it. Used for dict
+    # values, call arguments, and matched variable assignments alike.
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
       if node.value.strip():
         self.items.append(node.value)
+    elif isinstance(node, ast.JoinedStr):
+      s = self.render_fstring(node)
+      if s.strip():
+        self.items.append(s)
     elif isinstance(node, ast.Dict):
       for v in node.values:
-        self.collect_strings(v)
+        self.collect_value(v)
     elif isinstance(node, (ast.List, ast.Tuple, ast.Set)):
       for el in node.elts:
-        self.collect_strings(el)
+        self.collect_value(el)
 
   def visit_Dict(self, node):
     # Matches dicts keyed by a known error key, e.g. {"error": "..."},
     # anywhere in the code (not just inside a matched call).
     for k, v in zip(node.keys, node.values):
       if isinstance(k, ast.Constant) and k.value in DICT_KEYS:
-        if isinstance(v, ast.Constant) and isinstance(v.value, str):
-          self.items.append(v.value)
-        elif isinstance(v, (ast.List, ast.Tuple)):
-          for el in v.elts:
-            if isinstance(el, ast.Constant) and isinstance(el.value, str):
-              self.items.append(el.value)
+        self.collect_value(v)
     self.generic_visit(node)
 
   def visit_Call(self, node):
@@ -164,10 +180,19 @@ class Collector(ast.NodeVisitor):
     # arguments, regardless of dict key names.
     if call_name(node) in ERROR_CALL_NAMES:
       for arg in node.args:
-        self.collect_strings(arg)
+        self.collect_value(arg)
       for kw in node.keywords:
         if kw.value is not None:
-          self.collect_strings(kw.value)
+          self.collect_value(kw.value)
+    self.generic_visit(node)
+
+  def visit_Assign(self, node):
+    # Matches assignments to specific variable names, e.g.
+    # status_translations = {"requested": "Requested", ...}
+    # title = "Visit Status Change"
+    # message = f"Visit status changed from '{old_status_ar}' to '{new_status_ar}'"
+    if any(isinstance(t, ast.Name) and t.id in VARIABLE_NAMES for t in node.targets):
+      self.collect_value(node.value)
     self.generic_visit(node)
 
 def should_skip(path: Path) -> bool:
@@ -205,6 +230,7 @@ async function extractPythonErrorStrings({
   rootDir,
   dictKeys,
   errorCallNames,
+  variableNames,
   excludedDirs,
 }) {
   const candidates = ["python3", "python"];
@@ -217,6 +243,7 @@ async function extractPythonErrorStrings({
         rootDir,
         JSON.stringify(dictKeys),
         JSON.stringify(errorCallNames),
+        JSON.stringify(variableNames),
         JSON.stringify(excludedDirs),
       ]);
       const parsed = JSON.parse(stdout || "{}");
@@ -249,11 +276,13 @@ export async function mergeBackendErrorsIntoLocales(config) {
     backend.errorCallNames && backend.errorCallNames.length > 0
       ? backend.errorCallNames
       : ["ValidationError"];
+  const variableNames = backend.variableNames ?? [];
 
   const { filesScanned, errorStrings } = await extractPythonErrorStrings({
     rootDir,
     dictKeys,
     errorCallNames,
+    variableNames,
     excludedDirs: backend.excludedDirs ?? [],
   });
 

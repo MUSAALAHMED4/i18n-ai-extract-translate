@@ -38,6 +38,11 @@ const DEFAULT_CONFIG = {
     // arguments collected, regardless of dict key names — this catches
     // patterns like `raise serializers.ValidationError({"field": "..."})`.
     errorCallNames: ["ValidationError"],
+    // Assignments to any of these variable names have their value fully
+    // collected: a plain string (title = "..."), an f-string (message =
+    // f"... {var} ..." — interpolations become {{var}} placeholders), or a
+    // dict/list of strings (status_translations = {"requested": "Requested", ...}).
+    variableNames: [],
     excludedDirs: [
       "__pycache__",
       "migrations",
