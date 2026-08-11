@@ -175,9 +175,13 @@ function safeJsonParse(maybeJson) {
     const start = maybeJson.indexOf("{");
     const end = maybeJson.lastIndexOf("}");
     if (start >= 0 && end > start) {
-      return JSON.parse(maybeJson.slice(start, end + 1));
+      try {
+        return JSON.parse(maybeJson.slice(start, end + 1));
+      } catch {
+        throw new Error("MODEL_JSON_ERROR: model did not return valid JSON");
+      }
     }
-    throw new Error("Model did not return valid JSON");
+    throw new Error("MODEL_JSON_ERROR: model did not return valid JSON");
   }
 }
 
@@ -390,7 +394,10 @@ async function withRetry(fn, { maxAttempts = 5 } = {}) {
       lastErr = err;
       const message = err instanceof Error ? err.message : String(err);
       const delayMs = Math.min(10_000, 500 * 2 ** (attempt - 1));
-      if (attempt < maxAttempts && /(UNTRANSLATED|429|503|timeout|ECONNRESET|ETIMEDOUT)/i.test(message)) {
+      if (
+        attempt < maxAttempts &&
+        /(UNTRANSLATED|MODEL_JSON_ERROR|429|503|timeout|ECONNRESET|ETIMEDOUT)/i.test(message)
+      ) {
         await new Promise((r) => setTimeout(r, delayMs));
         continue;
       }
@@ -598,15 +605,17 @@ export async function runTranslate(config, cliOverrides = {}) {
             { maxAttempts: 5 },
           );
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          if (/UNTRANSLATED/i.test(message)) {
-            process.stdout.write(
-              `  ${lang}/${fileName}: could not translate one batch after retries, skipping it\n`,
-            );
-            await writeJson(targetPath, targetJson);
-            continue;
-          }
-          throw err;
+          // A single bad batch (malformed model output, a transient API
+          // error that outlived the retries, etc.) should not abort the
+          // whole run — skip it, keep whatever progress was already
+          // written, and move on to the next batch/file/language.
+          const rawMessage = err instanceof Error ? err.message : String(err);
+          const message = rawMessage.replaceAll(/\s+/g, " ").trim().slice(0, 200);
+          process.stdout.write(
+            `  ${lang}/${fileName}: could not translate one batch after retries (${message}), skipping it\n`,
+          );
+          await writeJson(targetPath, targetJson);
+          continue;
         }
 
         receivedCountForFile += Object.keys(translated).length;
