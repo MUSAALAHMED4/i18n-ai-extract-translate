@@ -331,8 +331,10 @@ if your backend raises other user-facing errors.
   pass `--dry-run`.
 - Progress is saved to disk after every translation batch, so an interrupted
   run doesn't lose completed work.
-- Values that already look non-English are left alone unless `--force` is
-  passed.
+- `translate` only ever fills in a key that's missing or empty. An existing
+  non-empty translation is never touched or overwritten — even if it happens
+  to look wrong (e.g. still in English) — unless you explicitly pass
+  `--force`, which re-checks and re-translates everything.
 - Locale JSON files are always written with keys sorted alphabetically, so
   they build up in a stable, predictable order instead of whatever order
   strings happened to be discovered in.

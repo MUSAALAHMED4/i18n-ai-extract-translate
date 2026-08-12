@@ -519,38 +519,24 @@ export async function runTranslate(config, cliOverrides = {}) {
         if (typeof value !== "string" || value.length === 0) continue;
 
         const current = getAtPointer(targetJson, pointer);
-        const isClearlyUntranslated =
-          typeof current === "string" &&
-          current.trim() !== "" &&
-          looksUntranslated({ sourceEnglish: value, translatedValue: current, targetLang: lang });
-        const shouldTranslate =
-          force ||
-          current == null ||
-          (typeof current === "string" && current.trim() === "") ||
-          isClearlyUntranslated;
+        const isMissing = current == null || (typeof current === "string" && current.trim() === "");
+        // Only ever touch a key that's missing/empty, unless --force was
+        // explicitly passed. An existing non-empty translation is never
+        // auto-overwritten just because a heuristic thinks it looks wrong.
+        const shouldTranslate = force || isMissing;
 
         if (shouldTranslate) {
           if (isLikelyNonTranslatableToken(value)) {
-            if (!dryRun) {
-              const canWriteDirectly =
-                force || current == null || (typeof current === "string" && current.trim() === "");
-              if (canWriteDirectly) {
-                setAtPointer(targetJson, pointer, value);
-                autoCopiedCountForFile += 1;
-              }
+            if (!dryRun && (force || isMissing)) {
+              setAtPointer(targetJson, pointer, value);
+              autoCopiedCountForFile += 1;
             }
             continue;
           }
 
-          if (!dryRun) {
-            const canSetEmptyPlaceholder =
-              current == null ||
-              (typeof current === "string" && current.trim() === "") ||
-              isClearlyUntranslated;
-            if (canSetEmptyPlaceholder) {
-              setAtPointer(targetJson, pointer, "");
-              placeholderEmptyCountForFile += 1;
-            }
+          if (!dryRun && isMissing) {
+            setAtPointer(targetJson, pointer, "");
+            placeholderEmptyCountForFile += 1;
           }
 
           pending.push({ pointer, value });
@@ -632,18 +618,10 @@ export async function runTranslate(config, cliOverrides = {}) {
           }
 
           const current = getAtPointer(targetJson, pointer);
-          const canWrite =
-            force ||
-            current == null ||
-            (typeof current === "string" && current.trim() === "") ||
-            (typeof current === "string" &&
-              current.trim() !== "" &&
-              looksUntranslated({
-                sourceEnglish: pointerToEnglish[pointer],
-                translatedValue: current,
-                targetLang: lang,
-              }));
-          if (!canWrite) continue;
+          const isMissing = current == null || (typeof current === "string" && current.trim() === "");
+          // Same rule as above: never overwrite an existing non-empty
+          // translation unless --force was explicitly passed.
+          if (!force && !isMissing) continue;
           setAtPointer(targetJson, pointer, sanitizedValue);
           updatedCountForFile += 1;
         }
